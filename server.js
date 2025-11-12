@@ -1,24 +1,48 @@
 // server.js
+require('dotenv').config();
 const express = require("express");
 const mongoose = require("mongoose");
 const app = express();
 
-// Your MongoDB connection string (with # encoded as %23)
-const MONGO_URI = "mongodb+srv://atspeaks_db_user:Atspeaks%232819@cluster0.9b27gax.mongodb.net/atspeaks?retryWrites=true&w=majority";
+// Get MongoDB URI from environment variables
+const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/atspeaks";
 
 let connectionStatus = "Checking connection...";
 
-// Try connecting to MongoDB
-mongoose
-  .connect(MONGO_URI)
-  .then(() => {
+// MongoDB Connection Options
+const connectDB = async () => {
+  try {
+    await mongoose.connect(MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+    });
     console.log("✅ Connected to MongoDB!");
     connectionStatus = "✅ MongoDB Connection Successful!";
-  })
-  .catch((err) => {
+  } catch (err) {
     console.error("❌ MongoDB Connection Failed:", err.message);
     connectionStatus = `❌ MongoDB Connection Failed: ${err.message}`;
-  });
+    // Retry connection after 5 seconds
+    setTimeout(connectDB, 5000);
+  }
+};
+
+// Initial connection
+connectDB();
+
+// Handle MongoDB connection events
+mongoose.connection.on('error', err => {
+  console.error('MongoDB connection error:', err);
+  connectionStatus = `❌ MongoDB Error: ${err.message}`;
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB disconnected');
+  connectionStatus = "❌ MongoDB Disconnected";
+  // Try to reconnect
+  setTimeout(connectDB, 5000);
+});
 
 // Home route
 app.get("/", (req, res) => {
