@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 const app = express();
 
 // Your MongoDB connection string (with # encoded as %23)
-const MONGO_URI = "mongodb+srv://atspeaks_db_user:Atspeaks%232819@cluster0.9b27gax.mongodb.net/atspeaks";
+const MONGO_URI = "mongodb+srv://atspeaks_db_user:Atspeaks%232819@cluster0.9b27gax.mongodb.net/atspeaks?retryWrites=true&w=majority";
 
 let connectionStatus = "Checking connection...";
 
