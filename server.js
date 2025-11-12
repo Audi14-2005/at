@@ -1,48 +1,128 @@
 // server.js
 require('dotenv').config();
 const express = require("express");
+const { MongoClient, ServerApiVersion } = require('mongodb');
 const mongoose = require("mongoose");
+
 const app = express();
 
 // Get MongoDB URI from environment variables
 const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/atspeaks";
 
 let connectionStatus = "Checking connection...";
+let isConnected = false;
 
-// MongoDB Connection Options
+// MongoDB Connection Handler
 const connectDB = async () => {
+  if (mongoose.connection.readyState >= 1) {
+    console.log("Using existing MongoDB connection");
+    return mongoose.connection.getClient();
+  }
+
   try {
+    console.log("🔌 Attempting to connect to MongoDB Atlas...");
+    
+    const options = {
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      },
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+      retryWrites: true,
+      w: 'majority'
+    };
+
+    // Create a new MongoClient
+    const client = new MongoClient(MONGO_URI, options);
+    
+    // Connect the client to the server
+    await client.connect();
+    
+    // Set up Mongoose connection
     await mongoose.connect(MONGO_URI, {
+      ...options,
       useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
-      socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+      useUnifiedTopology: true
     });
-    console.log("✅ Connected to MongoDB!");
+    
+    console.log("✅ Successfully connected to MongoDB Atlas!");
+    isConnected = true;
     connectionStatus = "✅ MongoDB Connection Successful!";
-  } catch (err) {
-    console.error("❌ MongoDB Connection Failed:", err.message);
-    connectionStatus = `❌ MongoDB Connection Failed: ${err.message}`;
-    // Retry connection after 5 seconds
-    setTimeout(connectDB, 5000);
+    
+    return client;
+  } catch (error) {
+    console.error("❌ MongoDB Connection Failed:", error.message);
+    connectionStatus = `❌ MongoDB Error: ${error.message}`;
+    isConnected = false;
+    throw error;
   }
 };
 
-// Initial connection
-connectDB();
+// Handle connection in Vercel serverless environment
+let client;
+if (process.env.VERCEL) {
+  // In Vercel, we want to connect on each request
+  app.use(async (req, res, next) => {
+    try {
+      client = await connectDB();
+      req.dbClient = client;
+      next();
+    } catch (error) {
+      console.error('Database connection error:', error);
+      res.status(500).send('Database connection error');
+    }
+  });
+} else {
+  // In development, maintain a persistent connection
+  connectDB().catch(console.error);
+}
 
-// Handle MongoDB connection events
-mongoose.connection.on('error', err => {
-  console.error('MongoDB connection error:', err);
-  connectionStatus = `❌ MongoDB Error: ${err.message}`;
+// Close the connection when the Node process ends
+process.on('SIGINT', async () => {
+  if (client) {
+    await client.close();
+    console.log('MongoDB connection closed through app termination');
+    process.exit(0);
+  }
 });
 
-mongoose.connection.on('disconnected', () => {
-  console.log('MongoDB disconnected');
-  connectionStatus = "❌ MongoDB Disconnected";
-  // Try to reconnect
-  setTimeout(connectDB, 5000);
-});
+// Serverless-compatible connection handling
+if (process.env.VERCEL) {
+  // For Vercel, handle connection per-request
+  app.use(async (req, res, next) => {
+    try {
+      if (mongoose.connection.readyState !== 1) { // 1 = connected
+        await connectDB();
+      }
+      next();
+    } catch (error) {
+      console.error('Connection error:', error);
+      next(error);
+    }
+  });
+} else {
+  // For local development, maintain persistent connection
+  connectDB();
+  
+  mongoose.connection.on('error', err => {
+    console.error('MongoDB connection error:', err);
+    connectionStatus = `❌ MongoDB Error: ${err.message}`;
+    isConnected = false;
+  });
+
+  mongoose.connection.on('disconnected', () => {
+    console.log('MongoDB disconnected');
+    connectionStatus = "❌ MongoDB Disconnected";
+    isConnected = false;
+    // Only attempt to reconnect in non-serverless environment
+    if (!process.env.VERCEL) {
+      setTimeout(connectDB, 5000);
+    }
+  });
+}
 
 // Home route
 app.get("/", (req, res) => {
